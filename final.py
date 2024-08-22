@@ -9,113 +9,113 @@ from sklearn.metrics import accuracy_score
 from sklearn.model_selection import StratifiedKFold
 import random
 
-# 忽略一些不必要的警告信息
+# Ignore some unnecessary warning messages
 warnings.filterwarnings('ignore')
 
-# 设置并获取随机种子，确保结果的可重复性
+# Set and obtain random seed to ensure reproducibility of results
 def seed_obtain(seed=2025):
     np.random.seed(seed)
     random.seed(seed)
 
 seed_obtain()
 
-# 加载数据
+# Load data
 def load_data():
     train_X = np.load("/work1/lzy/project/competition/JD/JDCOMP/training_set/train_x.npy")
     train_y = np.load("/work1/lzy/project/competition/JD/JDCOMP/training_set/train_y.npy")
     test_X = np.load("/work1/lzy/project/competition/JD/JDCOMP/test_set_A/test_x_A.npy")
     return train_X, train_y, test_X
 
-# 数据预处理，通过欠采样来处理训练集中的类别不平衡的问题
+# Data preprocessing, handling class imbalance in the training set by undersampling
 def preprocess_data(train_X, train_y):
     zero_index = np.where(train_y == 0)[0]
     np.random.shuffle(zero_index)
-    # 标签为0的只取4600
+    # Only take 4600 samples with label 0
     selected_indices = np.concatenate([zero_index[:4600], np.where(train_y != 0)[0]])
     return train_X[selected_indices], train_y[selected_indices]
 
-# 特征工程
+# Feature engineering
 def extract_features(data):
     feats = []
     for i in tqdm(range(len(data))):
         data_slice = data[i]
-        # 将每个样本的血氧和心率数据取平均值，转化为每秒的平均值
+        # Take the average value of blood oxygen and heart rate data for each sample, converted to the average per second
         blood_oxygen = data_slice[0].reshape(-1, 3).mean(axis=1)
         heart_rate = data_slice[1].reshape(-1, 3).mean(axis=1)
-        # 将血氧和心率数据构建为一个DataFrame
-        origin_feats = pd.DataFrame({'血氧/秒': blood_oxygen, '心率/秒': heart_rate})
-        # 增加衍生特征
+        # Construct a DataFrame with blood oxygen and heart rate data
+        origin_feats = pd.DataFrame({'Blood Oxygen/sec': blood_oxygen, 'Heart Rate/sec': heart_rate})
+        # Add derived features
         add_features(origin_feats)
-         # 将衍生特征合并为一个特征集
+        # Combine the derived features into a feature set
         feats.append(combine_features(origin_feats))
     return pd.DataFrame(feats)
 
-# 为每个特征列添加衍生特征，包括差分、滚动统计量、自相关等。
+# Add derived features for each feature column, including differences, rolling statistics, autocorrelations, etc.
 def add_features(df):
     for col in df.columns:
         for gap in [1, 2, 4, 8, 16, 30]:
-            df[f"{col}_shift{gap}"] = df[col].shift(gap)                  # 移位特征
-            df[f"{col}_gap{gap}"] = df[col] - df[f"{col}_shift{gap}"]     # 差分特征
+            df[f"{col}_shift{gap}"] = df[col].shift(gap)                  # Shifted features
+            df[f"{col}_gap{gap}"] = df[col] - df[f"{col}_shift{gap}"]     # Difference features
         for window in [3, 5, 10]:
-            df[f"{col}_rolling_mean{window}"] = df[col].rolling(window).mean()    # 滚动均值
-            df[f"{col}_rolling_std{window}"] = df[col].rolling(window).std()      # 滚动标准差
+            df[f"{col}_rolling_mean{window}"] = df[col].rolling(window).mean()    # Rolling mean
+            df[f"{col}_rolling_std{window}"] = df[col].rolling(window).std()      # Rolling standard deviation
         for lag in [1, 2, 4, 8, 16, 32]:
-            df[f"{col}_autocorr{lag}"] = df[col].autocorr(lag)            # 自相关系数
-        freqs, psd = welch(df[col])                                       # 功率谱密度
-        df[f"{col}_psd_mean"] = psd.mean()                                # 功率谱密度均值
-        df[f"{col}_psd_std"] = psd.std()                                  # 功率谱密度标准差
-        df[f"{col}_var"] = df[col].var()                                  # 计算方差
-        df[f"{col}_mad"] = np.median(np.abs(df[col] - np.median(df[col])))# 中位数绝对离差/偏差（MAD）
+            df[f"{col}_autocorr{lag}"] = df[col].autocorr(lag)            # Autocorrelation coefficient
+        freqs, psd = welch(df[col])                                       # Power spectral density
+        df[f"{col}_psd_mean"] = psd.mean()                                # Power spectral density mean
+        df[f"{col}_psd_std"] = psd.std()                                  # Power spectral density standard deviation
+        df[f"{col}_var"] = df[col].var()                                  # Calculate variance
+        df[f"{col}_mad"] = np.median(np.abs(df[col] - np.median(df[col])))# Median Absolute Deviation (MAD)
 
 def combine_features(df):
     """
-    对每个特征列计算多个统计量，包括均值、最大值、最小值等。
-    :param df: 输入的特征 DataFrame
-    :return: 统计量列表
+    Calculate multiple statistics for each feature column, including mean, max, min, etc.
+    :param df: Input feature DataFrame
+    :return: List of statistics
     """
     stats = ['mean', 'max', 'min', 'std', 'median', 'skew', 'kurt']
     return [df[col].agg(stats).values for col in df.columns]
 
- # 使用LightGBM和XGBoost进行模型训练和预测，通过交叉验证评估模型效果。
+# Train and predict using LightGBM and XGBoost, evaluating model performance through cross-validation.
 def train_and_predict(train_feats, test_feats, model_params, num_folds=10, seed=4200):
 
-    # 将训练和测试集的所有数据转换为数值类型，并填充缺失值为0
+    # Convert all data in the training and test sets to numeric types and fill missing values with 0
     train_feats = train_feats.apply(pd.to_numeric, errors='coerce').fillna(0)
     test_feats = test_feats.apply(pd.to_numeric, errors='coerce').fillna(0)
 
-    # 提取特征和标签
+    # Extract features and labels
     X = train_feats.drop(columns=['label'])
     y = train_feats['label']
 
-    # 初始化模型预测数组
+    # Initialize model prediction arrays
     oof_pred_lgb = np.zeros((len(X), 3), dtype=float)
     oof_pred_xgb = np.zeros((len(X), 3), dtype=float)
     test_pred_pro_lgb = np.zeros((num_folds, len(test_feats), 3), dtype=float)
     test_pred_pro_xgb = np.zeros((num_folds, len(test_feats), 3), dtype=float)
 
-    # 进行分层交叉验证
+    # Perform stratified cross-validation
     skf = StratifiedKFold(n_splits=num_folds, shuffle=True, random_state=seed)
     
-    model_lgb = LGBMClassifier(**model_params['lgb'])            # 初始化LightGBM模型
-    xgb_params = model_params['xgb']                             # XGBoost模型参数
+    model_lgb = LGBMClassifier(**model_params['lgb'])            # Initialize LightGBM model
+    xgb_params = model_params['xgb']                             # XGBoost model parameters
     
     for fold, (train_index, valid_index) in enumerate(skf.split(X, y)):
         print(f"Fold: {fold}")
         X_train, X_valid = X.iloc[train_index], X.iloc[valid_index]
         y_train, y_valid = y.iloc[train_index], y.iloc[valid_index]
 
-        # 对训练和验证集的数据进行数值化处理，并填充缺失值
+        # Convert data for the training and validation sets to numeric types and fill missing values
         X_train = X_train.apply(pd.to_numeric, errors='coerce').fillna(0)
         X_valid = X_valid.apply(pd.to_numeric, errors='coerce').fillna(0)
 
-        # 训练LightGBM模型
+        # Train the LightGBM model
         model_lgb.fit(X_train, y_train, eval_set=[(X_valid, y_valid)],
                       callbacks=[log_evaluation(100), early_stopping(100)])
-        # 保存验证集的预测结果
+        # Save the prediction results for the validation set
         oof_pred_lgb[valid_index] = model_lgb.predict_proba(X_valid)
         test_pred_pro_lgb[fold] = model_lgb.predict_proba(test_feats)
 
-        # 训练XGBoost模型
+        # Train the XGBoost model
         dtrain = DMatrix(X_train, label=y_train)
         dvalid = DMatrix(X_valid, label=y_valid)
         dtest = DMatrix(test_feats)
@@ -126,25 +126,25 @@ def train_and_predict(train_feats, test_feats, model_params, num_folds=10, seed=
         oof_pred_xgb[valid_index] = xgb_model.predict(dvalid)
         test_pred_pro_xgb[fold] = xgb_model.predict(dtest)
    
-    # 综合LightGBM和XGBoost的预测结果
+    # Combine the prediction results from LightGBM and XGBoost
     oof_pred = (oof_pred_lgb + oof_pred_xgb) / 2
     oof_pred_labels = np.argmax(oof_pred, axis=1)
     print(f"Accuracy Score: {accuracy_score(y, oof_pred_labels) * 2}")
     
-    # 生成最终测试集的预测结果
+    # Generate the final prediction results for the test set
     test_pred_pro = (test_pred_pro_lgb + test_pred_pro_xgb).mean(axis=0)
     test_preds = np.argmax(test_pred_pro, axis=1)
     
     return oof_pred, test_preds
 
-# 模型训练过程
+# Model training process
 train_X, train_y, test_X = load_data()
 train_X, train_y = preprocess_data(train_X, train_y)
 train_feats = extract_features(train_X)
 train_feats['label'] = train_y
 test_feats = extract_features(test_X)
 
-# 定义参数
+# Define parameters
 model_params = {
     'lgb': {
         "boosting_type": "gbdt",
