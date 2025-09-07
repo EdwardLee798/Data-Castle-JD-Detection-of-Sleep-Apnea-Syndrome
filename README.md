@@ -1,4 +1,4 @@
-# Jing Dong Health Competition: Detection of Sleep Apnea and Hypopnea
+# Jing Dong Health Competition: Detection of Sleep Apnea and Hypopnea（Data Castle 京东健康·全球医疗AI创新大赛：睡眠呼吸暂停和低通气事件检测）
 
 This competition focuses on wearable sleep monitoring scenarios. By analyzing a patient's blood oxygen and heart rate data, it aims to detect apnea and hypopnea events, helping to warn patients of potential health risks.
 
